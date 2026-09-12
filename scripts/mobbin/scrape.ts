@@ -77,6 +77,21 @@ function extractOcrText(regions: unknown): string {
   return [...new Set(text.map((value) => value.trim()).filter(Boolean))].join('\n');
 }
 
+function resolveMediaUrl(sourceUrl: string): string {
+  const imageHead = process.env.MOBBIN_IMAGE_HEAD;
+  if (!imageHead) return sourceUrl;
+  try {
+    const pathname = new URL(sourceUrl).pathname;
+    const contentIndex = pathname.indexOf('content/');
+    if (contentIndex >= 0) {
+      return `${imageHead}${pathname.slice(contentIndex + 'content/'.length)}`;
+    }
+  } catch {
+    // The storage layer will report malformed source URLs.
+  }
+  return sourceUrl;
+}
+
 async function mapLimit<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -121,28 +136,31 @@ async function saveApp(
     const mediaErrors: string[] = [];
     let uploaded = 0;
 
-    const assets: Array<{ url: string; kind: MediaKind; restricted: boolean }> = [];
-    if (logoUrl) assets.push({ url: logoUrl, kind: 'logo', restricted: false });
+    const assets: Array<{ url: string; sourceUrl: string; kind: MediaKind; restricted: boolean }> = [];
+    const addAsset = (sourceUrl: string, kind: MediaKind, restricted: boolean) => {
+      assets.push({ url: resolveMediaUrl(sourceUrl), sourceUrl, kind, restricted });
+    };
+    if (logoUrl) addAsset(logoUrl, 'logo', false);
     for (const screen of details.screens) {
-      if (screen.screenUrl) assets.push({ url: screen.screenUrl, kind: 'screen', restricted: Boolean(screen.restricted) });
+      if (screen.screenUrl) addAsset(screen.screenUrl, 'screen', Boolean(screen.restricted));
     }
     for (const flow of details.flows) {
       const url = flow.videoCdnVideoSources?.src;
-      if (url) assets.push({ url, kind: 'video', restricted: Boolean(flow.restricted) });
+      if (url) addAsset(url, 'video', Boolean(flow.restricted));
     }
 
     const uniqueAssets = [...new Map(assets.map((asset) => [asset.url, asset])).values()];
     await mapLimit(uniqueAssets, options.mediaConcurrency, async (asset) => {
       try {
         if (asset.restricted) {
-          assetIds.set(asset.url, await markRestrictedMedia(sql, asset.url, asset.kind));
+          assetIds.set(asset.sourceUrl, await markRestrictedMedia(sql, asset.url, asset.kind));
         } else if (options.downloadMedia) {
           const stored = await storeMedia(sql, asset.url, asset.kind);
-          assetIds.set(asset.url, stored.id);
+          assetIds.set(asset.sourceUrl, stored.id);
           if (stored.uploaded) uploaded++;
         }
       } catch (error) {
-        mediaErrors.push(`${asset.url}: ${error instanceof Error ? error.message : String(error)}`);
+        mediaErrors.push(`${asset.kind}: ${error instanceof Error ? error.message : String(error)}`);
       }
     });
 

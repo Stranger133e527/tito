@@ -30,6 +30,7 @@ Configure these under **Repository settings → Secrets and variables → Action
 | `MOBBIN_REFRESH_TOKEN` | Initial Supabase refresh token used by Mobbin |
 | `MOBBIN_SUPABASE_PROJECT_REF` | Mobbin's Supabase project reference |
 | `MOBBIN_SUPABASE_ANON_KEY` | Mobbin's public Supabase anonymous key |
+| `MOBBIN_IMAGE_HEAD` | Bytescale delivery prefix used to resolve Mobbin screen-image paths |
 
 The initial Mobbin credentials seed `source_sessions` once. Rotated access/refresh tokens are then stored in PostgreSQL. Do not use the same refresh-token chain simultaneously in a browser and the workflow: Supabase rotates refresh tokens and concurrent owners can invalidate one another.
 
@@ -67,4 +68,3 @@ mobbin/{logo|screen|video}/{first-two-hash-chars}/{sha256(source-url)}.{extensio
 ```
 
 This lets retries safely overwrite the same object and deduplicates repeated media across flows and apps. Keep the bucket private; application delivery should use signed URLs or a controlled proxy.
-
