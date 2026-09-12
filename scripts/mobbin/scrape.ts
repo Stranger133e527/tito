@@ -287,65 +287,68 @@ async function saveApp(
   }
 }
 
-const options = parseOptions();
-const sql = connectDatabase();
-let totalFailures = 0;
+async function main() {
+  const options = parseOptions();
+  const sql = connectDatabase();
+  let totalFailures = 0;
 
-try {
-  await migrate(sql);
-  for (const platform of options.platforms) {
-    const apps = await fetchApps(sql, platform);
-    let selected = apps.filter((_app, index) => index % options.shardCount === options.shardIndex);
-    if (options.maxApps > 0) selected = selected.slice(0, options.maxApps);
-    const [run] = await sql<{ id: number }[]>`
-      INSERT INTO scrape_runs (
-        github_run_id, github_job, platform, shard_index, shard_count, status, apps_discovered
-      ) VALUES (
-        ${process.env.GITHUB_RUN_ID || null}, ${process.env.GITHUB_JOB || null},
-        ${platform}, ${options.shardIndex}, ${options.shardCount}, 'running', ${apps.length}
-      ) RETURNING id
-    `;
-    let processed = 0;
-    let skipped = 0;
-    let failed = 0;
-    let mediaUploaded = 0;
-
-    for (const app of selected) {
-      if (!(await shouldScrape(sql, platform, app.id, options.freshHours))) {
-        skipped++;
-        continue;
-      }
-      try {
-        mediaUploaded += await saveApp(sql, run.id, platform, app, options);
-        processed++;
-        console.log(`[${platform} ${options.shardIndex}/${options.shardCount}] saved ${app.appName || app.id}`);
-      } catch (error) {
-        failed++;
-        console.error(`[${platform}] failed ${app.appName || app.id}:`, error);
-      }
-      await sql`
-        UPDATE scrape_runs SET apps_processed = ${processed}, apps_skipped = ${skipped},
-          apps_failed = ${failed}, media_uploaded = ${mediaUploaded}
-        WHERE id = ${run.id}
+  try {
+    await migrate(sql);
+    for (const platform of options.platforms) {
+      const apps = await fetchApps(sql, platform);
+      let selected = apps.filter((_app, index) => index % options.shardCount === options.shardIndex);
+      if (options.maxApps > 0) selected = selected.slice(0, options.maxApps);
+      const [run] = await sql<{ id: number }[]>`
+        INSERT INTO scrape_runs (
+          github_run_id, github_job, platform, shard_index, shard_count, status, apps_discovered
+        ) VALUES (
+          ${process.env.GITHUB_RUN_ID || null}, ${process.env.GITHUB_JOB || null},
+          ${platform}, ${options.shardIndex}, ${options.shardCount}, 'running', ${apps.length}
+        ) RETURNING id
       `;
-    }
+      let processed = 0;
+      let skipped = 0;
+      let failed = 0;
+      let mediaUploaded = 0;
 
-    const status = failed > 0 ? 'partial' : 'complete';
-    await sql`
-      UPDATE scrape_runs SET status = ${status}, apps_processed = ${processed},
-        apps_skipped = ${skipped}, apps_failed = ${failed}, media_uploaded = ${mediaUploaded},
-        finished_at = now() WHERE id = ${run.id}
-    `;
-    totalFailures += failed;
+      for (const app of selected) {
+        if (!(await shouldScrape(sql, platform, app.id, options.freshHours))) {
+          skipped++;
+          continue;
+        }
+        try {
+          mediaUploaded += await saveApp(sql, run.id, platform, app, options);
+          processed++;
+          console.log(`[${platform} ${options.shardIndex}/${options.shardCount}] saved ${app.appName || app.id}`);
+        } catch (error) {
+          failed++;
+          console.error(`[${platform}] failed ${app.appName || app.id}:`, error);
+        }
+        await sql`
+          UPDATE scrape_runs SET apps_processed = ${processed}, apps_skipped = ${skipped},
+            apps_failed = ${failed}, media_uploaded = ${mediaUploaded}
+          WHERE id = ${run.id}
+        `;
+      }
+
+      const status = failed > 0 ? 'partial' : 'complete';
+      await sql`
+        UPDATE scrape_runs SET status = ${status}, apps_processed = ${processed},
+          apps_skipped = ${skipped}, apps_failed = ${failed}, media_uploaded = ${mediaUploaded},
+          finished_at = now() WHERE id = ${run.id}
+      `;
+      totalFailures += failed;
+    }
+  } finally {
+    await sql.end();
   }
-} catch (error) {
+
+  if (totalFailures > 0) {
+    throw new Error(`${totalFailures} app(s) failed; rerun the workflow to resume them.`);
+  }
+}
+
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
-} finally {
-  await sql.end();
-}
-
-if (totalFailures > 0) {
-  console.error(`${totalFailures} app(s) failed; rerun the workflow to resume them.`);
-  process.exitCode = 1;
-}
+});
