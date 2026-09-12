@@ -53,6 +53,20 @@ function authCookie(token: unknown, projectRef: string): string {
 async function seedSession(sql: Database): Promise<void> {
   const cookie = process.env.MOBBIN_COOKIE;
   if (!cookie) return;
+
+  if (process.env.FORCE_MOBBIN_SESSION_SEED === 'true') {
+    await sql`
+      INSERT INTO source_sessions (source, cookie, access_token, refresh_token)
+      VALUES ('mobbin', ${cookie}, ${process.env.MOBBIN_ACCESS_TOKEN || null}, ${process.env.MOBBIN_REFRESH_TOKEN || null})
+      ON CONFLICT (source) DO UPDATE
+      SET cookie = EXCLUDED.cookie,
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          updated_at = now()
+    `;
+    return;
+  }
+
   await sql`
     INSERT INTO source_sessions (source, cookie, access_token, refresh_token)
     VALUES ('mobbin', ${cookie}, ${process.env.MOBBIN_ACCESS_TOKEN || null}, ${process.env.MOBBIN_REFRESH_TOKEN || null})
@@ -239,4 +253,3 @@ export async function fetchAppDetails(
   if (!screens || !flows) throw new Error('Mobbin page did not contain complete screen and flow data');
   return { screens, flows, sourceUrl };
 }
-

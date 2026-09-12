@@ -25,6 +25,10 @@ on:
         description: Copy permitted images and videos to Tigris
         type: boolean
         default: true
+      replace_session:
+        description: Replace the stored Mobbin session from Actions secrets (use once after refreshing secrets)
+        type: boolean
+        default: false
   schedule:
     - cron: '17 3 * * 0'
 
@@ -87,6 +91,7 @@ jobs:
       MOBBIN_SUPABASE_PROJECT_REF: ${{ secrets.MOBBIN_SUPABASE_PROJECT_REF }}
       MOBBIN_SUPABASE_ANON_KEY: ${{ secrets.MOBBIN_SUPABASE_ANON_KEY }}
       MOBBIN_IMAGE_HEAD: ${{ secrets.MOBBIN_IMAGE_HEAD }}
+      FORCE_MOBBIN_SESSION_SEED: ${{ github.event_name == 'schedule' && 'false' || inputs.replace_session }}
       TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
       TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
       TIGRIS_BUCKET: ${{ secrets.TIGRIS_BUCKET }}

@@ -34,6 +34,8 @@ Configure these under **Repository settings → Secrets and variables → Action
 
 The initial Mobbin credentials seed `source_sessions` once. Rotated access/refresh tokens are then stored in PostgreSQL. Do not use the same refresh-token chain simultaneously in a browser and the workflow: Supabase rotates refresh tokens and concurrent owners can invalidate one another.
 
+If the stored Mobbin session expires, replace the three Mobbin session secrets with a fresh browser session and run the workflow once with `replace_session=true`. Later manual and scheduled runs should leave it false so PostgreSQL remains the single owner of the rotating refresh-token chain.
+
 ## Database model
 
 - `source_sessions`: encrypted-at-rest provider session material used only by Actions.
@@ -53,7 +55,7 @@ The schema is idempotent and is applied by the workflow's `migrate` job before a
 
 Use **Actions → Archive Mobbin metadata and media → Run workflow**. A safer rollout is:
 
-1. Choose `ios`, `1` shard, `max_apps=2`, and keep media enabled.
+1. Choose `ios`, `1` shard, `max_apps=2`, and keep media enabled. Set `replace_session=true` only when bootstrapping freshly updated Mobbin session secrets.
 2. Confirm the Action, database rows, and Tigris objects look correct.
 3. Run `all`, `8` shards, and `max_apps=0` for the complete archive.
 
