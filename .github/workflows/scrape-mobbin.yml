@@ -1,0 +1,112 @@
+name: Archive Mobbin metadata and media
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to scrape
+        type: choice
+        options: [all, ios, android, web]
+        default: all
+      shard_count:
+        description: Number of active shards (1-8)
+        type: choice
+        options: ['1', '2', '4', '8']
+        default: '8'
+      max_apps:
+        description: Maximum apps per shard; 0 means every app
+        type: string
+        default: '0'
+      fresh_hours:
+        description: Skip apps successfully scraped within this many hours; 0 forces refresh
+        type: string
+        default: '0'
+      download_media:
+        description: Copy permitted images and videos to Tigris
+        type: boolean
+        default: true
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobbin-archive-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SCRAPER_DATABASE_URL: ${{ secrets.SCRAPER_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm scrape:migrate
+
+  scrape:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        platform: [ios, android, web]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    if: >-
+      github.event_name == 'schedule' ||
+      inputs.platform == 'all' ||
+      inputs.platform == matrix.platform
+    env:
+      SCRAPER_DATABASE_URL: ${{ secrets.SCRAPER_DATABASE_URL }}
+      MOBBIN_COOKIE: ${{ secrets.MOBBIN_COOKIE }}
+      MOBBIN_ACCESS_TOKEN: ${{ secrets.MOBBIN_ACCESS_TOKEN }}
+      MOBBIN_REFRESH_TOKEN: ${{ secrets.MOBBIN_REFRESH_TOKEN }}
+      MOBBIN_SUPABASE_PROJECT_REF: ${{ secrets.MOBBIN_SUPABASE_PROJECT_REF }}
+      MOBBIN_SUPABASE_ANON_KEY: ${{ secrets.MOBBIN_SUPABASE_ANON_KEY }}
+      TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+      TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+      TIGRIS_BUCKET: ${{ secrets.TIGRIS_BUCKET }}
+      TIGRIS_ENDPOINT: ${{ secrets.TIGRIS_ENDPOINT }}
+      TIGRIS_REGION: auto
+      DB_POOL_SIZE: '5'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Scrape shard
+        env:
+          REQUESTED_SHARD_COUNT: ${{ github.event_name == 'schedule' && '8' || inputs.shard_count }}
+          MAX_APPS: ${{ github.event_name == 'schedule' && '0' || inputs.max_apps }}
+          FRESH_HOURS: ${{ github.event_name == 'schedule' && '168' || inputs.fresh_hours }}
+          DOWNLOAD_MEDIA: ${{ github.event_name == 'schedule' && 'true' || inputs.download_media }}
+        run: |
+          if [ "${{ matrix.shard }}" -ge "$REQUESTED_SHARD_COUNT" ]; then
+            echo "Shard disabled by shard_count=$REQUESTED_SHARD_COUNT"
+            exit 0
+          fi
+          pnpm scrape:mobbin -- \
+            --platforms=${{ matrix.platform }} \
+            --shard-index=${{ matrix.shard }} \
+            --shard-count="$REQUESTED_SHARD_COUNT" \
+            --max-apps="$MAX_APPS" \
+            --fresh-hours="$FRESH_HOURS" \
+            --download-media="$DOWNLOAD_MEDIA" \
+            --media-concurrency=3
+
